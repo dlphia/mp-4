@@ -1,0 +1,328 @@
+---
+title: "mp4_fliu311_R_code"
+author: "Faqiang Liu"
+email: "fliu311@gatech.edu"
+date: "4/3/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is the analysis part of Mini Project 4 - Predictive Analytics. This includes data importing, data cleaning, modeling, and performance evaluation. 
+\
+\
+
+# 1. Data Import
+This project uses the Cleveland database taken from the UCI repository [link](https://www.kaggle.com/ronitf/heart-disease-uci).The complete list of 14 attributes (excluding 1 outcome variable) used and definition are as follows:\
+\ > age: age in years
+\ > sex: male or female
+\ > cp: chest pain type
+\ > trestbps: resting blood pressure
+\ > chol: cholesterol level
+\ > fbs: fasting blood sugar level
+\ > restecg: resting electrocardiographic results
+\ > thalach: maximum heart rate achieved
+\ > exang: exercise induced angina
+\ > oldpeak: ST depression induced by exercise relative to rest
+\ > slope: the slope of the peak exercise segment
+\ > ca: Number of major vessels colored by fluoroscopy
+\ > thal: thallium scan
+
+```{r Data Import, message=FALSE}
+setwd("C:/Users/dlphia/Desktop/CS6440IHI/mp4/heart_disease_prediction")
+
+options(warn = -1)
+
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(corrplot)
+library(caret)
+library(pbkrtest)
+library(ROCR)
+library(tree)
+library(randomForest)
+library(rstanarm)
+library(pROC)
+
+heart <- read.csv("heart.csv", header = FALSE, sep = ",")
+
+colnames(heart) <- c("Age", "Gender", "CP", "TBps", "Chol", "Fbs", "Recg", "Thalach", 
+                     "Exang", "Op", "Slope", "Ca", "Thal", "Heart")
+```
+\
+
+# 2. Data Cleaning and pre-Processing
+There are 14 variables from the dataset we are using in this project. All fields are converted to numeric, and null values are imputed with mean imputation.\
+```{r Data Cleaning, message=FALSE}
+str(heart)
+#convert variables to numeric values
+heart$CP = as.numeric(as.character(heart$CP))
+heart$TBps = as.numeric(as.character(heart$TBps))
+heart$Chol = as.numeric(as.character(heart$Chol))
+heart$Fbs = as.numeric(as.character(heart$Fbs))
+heart$Recg = as.numeric(as.character(heart$Recg))
+heart$Thalach = as.numeric(as.character(heart$Thalach))
+heart$Exang = as.numeric(as.character(heart$Exang))
+heart$Op = as.numeric(as.character(heart$Op))
+heart$Slope = as.numeric(as.character(heart$Slope))
+heart$Ca = as.numeric(as.character(heart$Ca))
+heart$Thal = as.numeric(as.character(heart$Thal))
+heart$Heart = as.numeric(as.character(heart$Heart))
+str(heart)
+
+#impute for na values, using mean imputation
+heart$Age[which(is.na(heart$Age))] = mean(heart$Age, na.rm = TRUE)
+heart$Gender[which(is.na(heart$Gender))] = mean(heart$Gender, na.rm = TRUE)
+heart$CP[which(is.na(heart$CP))] = mean(heart$CP, na.rm = TRUE)
+heart$TBps[which(is.na(heart$TBps))] = mean(heart$TBps, na.rm = TRUE)
+heart$Chol[which(is.na(heart$Chol))] = mean(heart$Chol, na.rm = TRUE)
+heart$Fbs[which(is.na(heart$Fbs))] = mean(heart$Fbs, na.rm = TRUE)
+heart$Recg[which(is.na(heart$Recg))] = mean(heart$Recg, na.rm = TRUE)
+heart$Thalach[which(is.na(heart$Thalach))] = mean(heart$Thalach, na.rm = TRUE)
+heart$Exang[which(is.na(heart$Exang))] = mean(heart$Exang, na.rm = TRUE)
+heart$Op[which(is.na(heart$Op))] = mean(heart$Op, na.rm = TRUE)
+heart$Slope[which(is.na(heart$Slope))] = mean(heart$Slope, na.rm = TRUE)
+heart$Ca[which(is.na(heart$Ca))] = mean(heart$Ca, na.rm = TRUE)
+heart$Thal[which(is.na(heart$Thal))] = mean(heart$Thal, na.rm = TRUE)
+heart$Heart[which(is.na(heart$Heart))] = mean(heart$Heart, na.rm = TRUE)
+
+```
+
+The “goal” field indicates if patient has heart disease. And categorical variable is converted to binary, with 0/1 representing pass/fail respectively. Feature scaling is conducted to scale the data to the interval between zero and one. This is make sure features with lower values are evaluated equally in the model as those with higher value range.\ 
+```{r data scaling}
+#convert categorical outcome variable to binary, pass/fail
+heart$Heart[heart$Heart == "2"] <- "1"
+heart$Heart[heart$Heart == "3"] <- "1"
+heart$Heart[heart$Heart == "4"] <- "1"
+heart$Heart = as.numeric(as.character(heart$Heart))
+
+##scalling, 
+library(caret)
+#The preProcess option "range", scales the data to the interval between zero and one.
+preprocessParamsh <- preProcess(heart, method = c("range"))
+print(preprocessParamsh)
+transformedh <- predict(preprocessParamsh, heart)
+
+heart = transformedh
+```
+Data screen show:\
+```{r data screen show}
+head(heart)
+summary(heart)
+```
+
+Relationships between the risk factors and risk of heart disease are plotted; this also helps visually evaluate importance of risk factors in predicting risk (a variable is more important if it varies as with outcome variable).For example, we can tell from the plot of CP, that it is possitively correlated with risk of heart disease, making it a predictor potentially of high importance.\
+```{r correlation, message=F}
+ #Relationship between Cp, heart
+library(tidyr)
+
+gather(heart, x, y, Age:Thal) %>%
+  ggplot(aes(x = y, color = Heart, fill = Heart)) +
+  geom_density(alpha = 0.3) +
+  facet_wrap( ~ x, scales = "free", ncol = 3)
+
+#check correlation between independent variables
+corrplot(cor(heart[, -9]), type = "lower", method = "number")
+```
+As we can tell from the level of correlation, the 13 predictors are relatively independent of each other. (In cases of having predictors of high correlation, which we call 'multicollinearity' in regression analysis, we either remove the highly correlated predictors from the model, or use PCA to reduce dimensions of the model.)\
+\
+
+# 3. Model fitting
+The project tests a variety of ML based mathematical models to select a specific number of features in a suite of different statistical tests, and to predict risk of heart disease. The types of models evaluated here include logistic regression, Bayesian regression, decision tree, random forest, and boosting. \
+A first step is to split data, randommly, into training dataset (70%), to build model, and testing dataset (30%), to evaluate model performance.\
+```{r}
+set.seed(314159)
+indexh <- createDataPartition(heart$Heart, p = 0.7, list = F) #70% for training
+trainh <- heart[indexh,]
+testh  <- heart[-indexh,]
+```
+\
+
+## 3.1. Logistic Regression
+Logistic regression is similar to linear regression, predicting outcome with a function of explanatory variables (heart disease risk factors). It is used in machine learning for classification problems, yielding binary outputs between pass/fail.\
+```{r Logistic Regression}
+#Logistic Regression
+mod_finh <- glm(Heart~.,
+                data = trainh, family = binomial(link = "logit"))
+summary(mod_finh) #check for significance level in output, which indicates importance of risk factors
+
+summary(residuals(mod_finh))
+par(mfrow = c(2, 2))
+plot(mod_finh)
+```
+The Q-Q plot tests normality of residue.\
+The residual vs leverage plot helps to find influential cases, if any outliers that are influential in the regression model. We look at the upper right or lower right for if any cases as influential outliers.\
+\
+Accuracy of model is evaluated with test data, checking % of correct predictions of original model comparing to outcome in test data.\
+```{r lr continued}
+#evaluate accuracy on test data
+testh_pred <- predict(mod_finh, testh, type = "response")
+pred_testhh <- as.data.frame(cbind(testh$Heart, testh_pred))
+colnames(pred_testhh) <- c("Original", "testh_pred")
+pred_testhh$outcome <- ifelse(pred_testhh$testh_pred > 0.5, 1, 0)
+
+#calculate accuracy
+acc_lgh <- confusionMatrix(factor(testh$Heart), factor(pred_testhh$outcome)) $overall['Accuracy']
+print(paste('logistic regression model accuracy is', round(acc_lgh, 2) * 100, '%'))
+
+#AUC curve 
+par(mfrow = c(1, 1))
+plot.roc(testh$Heart, testh_pred, percent = TRUE, print.auc = TRUE,
+         main = "AUC for logistic regression")
+
+```
+AUC curve is a performance measurement for the classification problems.It measures the ability of a classifier to distinguish between classes. 
+\
+\
+
+## 3.2. Bayesian Logistic Regression
+Bayesian logistic regression is the Bayesian counterpart to the common logistic regression (Sean M O'Brien, 2004). In the Bayesian approach, out belief is updated and proportional to the prior likelihood. We arrive at a distribution of result estimation, rather than a single point estimate.\
+```{r Bayesian, message=FALSE}
+#Bayesian Logistic Regression
+#prior distribution, assuming student t dis
+prior_disth <- student_t(df = 7, location = 0, scale = 2.5)
+bayes_modh <- stan_glm(Heart~., data = trainh,
+                       family = binomial(link = "logit"),
+                       prior = prior_disth, prior_intercept = prior_disth,
+                       seed = 314159)
+
+bayes_resh <- data.frame(residuals(bayes_modh))
+bayes_resh$indexh <- seq.int(nrow(bayes_resh))
+
+pred <- posterior_linpred(bayes_modh, newdata = testh, transform = TRUE)
+fin_predh <- colMeans(pred)
+testh_prediction <- as.integer(fin_predh >= 0.5)
+
+acc_bayesh <- confusionMatrix(factor(testh$Heart), factor(testh_prediction)) $overall['Accuracy']
+print(paste('Bayesian logistic regression model accuracy is', round(acc_bayesh, 2) * 100, '%'))
+
+plot.roc(testh$Heart, fin_predh, percent = TRUE, print.auc = TRUE,
+         main = "AUC for Bayesian logistic regression")
+
+```
+\
+
+## 3.3. Decision Tree
+Decision tree is where each leaf node acting as a classification model, and all branches combine to give an overall class label. Trees are constructed pri-oritizing the highest information gain, until all leaf nodes are pure.\
+```{r Decision Tree}
+#Decision Tree
+library(rpart)
+library(rpart.plot)
+
+set.seed(314159)
+fit <- rpart(Heart~.,
+             data = trainh,
+             method = "class",
+             control = rpart.control(xval = 10,
+                                     minbucket = 2,
+                                     cp = 0),
+             parms = list(split = "information"))
+
+rpart.plot(fit, extra = 100)
+pred_dt_testh <- predict(fit, testh, type = "class")
+acc_dth <- confusionMatrix(factor(testh$Heart), factor(pred_dt_testh)) $overall['Accuracy']
+print(paste('Decision tree model accuracy is', round(acc_dth, 2) * 100, '%'))
+```
+Decision tree tends to overfit with training data, and hence underperforms with testing data. Random Forest is a robust technique that employs multiple trees to vote an overall decision.\
+
+## 3.4. Random Forest
+Random forest uses an ensemble of trees vote a “conclusion”. It is generally more robust to outliers and overfitting, but also are more difficult to inter-pret, as to understand the most contributing variable(s) for the prediction. \
+```{r Random Forest}
+#Random Forest
+#random forest is an ensemble of decision trees, and usually takes longer to calculate
+heart$Heart <- as.factor(heart$Heart)
+trainh$Heart <- as.factor(trainh$Heart)
+testh$Heart <- as.factor(testh$Heart)
+
+set.seed(314159)
+model_rfh <- caret::train(Heart~.,
+                          data = trainh,
+                          method = "rf",
+                          preProcess = c("scale", "center"),
+                          trControl = trainControl(method ="repeatedcv",
+                                                   number = 10,
+                                                   repeats = 10,
+                                                   savePredictions =TRUE,
+                                                   verboseIter = FALSE))
+
+
+importanceh <- varImp(model_rfh, scale = TRUE)
+plot(importanceh)
+
+acc_rfh <- confusionMatrix(predict(model_rfh, testh), testh$Heart) $overall['Accuracy']
+print(paste('Random Forest model accuracy is', round(acc_rfh, 2) * 100, '%'))
+```
+\
+
+## 3.5. Extreme gradient boosting
+Extreme gradient boosting, as one of the most favorite algorithms at Kaggle, is a machine learning technique that optimizes model in a step-wise way by giving weights to the more important predictors. \
+```{r XGBoost}
+#Extreme gradient boosting
+model_xgbh <- caret::train(Heart~.,
+                           data = trainh,
+                           method = "xgbTree",
+                           preProcess = c("scale", "center"),
+                           trControl = trainControl(method = "repeatedcv",
+                                                    number = 10,
+                                                    repeats = 10,
+                                                    savePredictions = TRUE,
+                                                    verboseIter = FALSE))
+
+imphortance <- varImp(model_xgbh, scale = TRUE)
+plot(imphortance)
+
+acc_xbgh <- confusionMatrix(predict(model_xgbh, testh), testh$Heart) $overall['Accuracy'];
+print(paste('Extreme gradient boosting model accuracy is', round(acc_xbgh, 2) * 100, '%'))
+
+```
+\
+
+# 4. Comparison of Model Performance
+```{r models accuracy}
+##summarize accuracy of various models
+accuracyh <- data.frame(Model = c("Logistic", "Bayesian Logistic", "Decision Tree",
+                                  "Random Forest", "XGBoost"),
+                        Accuracy = c(acc_lgh, acc_bayesh, acc_dth,
+                                     acc_rfh, acc_xbgh))
+
+acc_heart = ggplot(accuracyh, aes(x = Model, y = Accuracy)) + geom_bar(stat = 'identity') + theme_bw() + ggtitle('Comparison of Model Accuracy')
+
+acc_heart
+
+```
+Model                        | Accuracy
+---------------------------- | -------------
+Logistic Regression          | 0.8405797
+Bayesian Logistic Regression | 0.8478261
+Decision Tree                | 0.7608696
+Random Forest                | 0.8115942
+XGBoost                      | 0.8333333
+\
+```{r models robustness, message=FALSE}
+#AUC curve is a performance measurement for the classification problems.It measures the ability of a classifier to distinguish between classes. 
+par(mfrow = c(2, 3))
+plot.roc(testh$Heart, testh_pred, percent = TRUE, print.auc = TRUE,
+         main = "AUC for logistic regression")
+plot.roc(testh$Heart, fin_predh, percent = TRUE, print.auc = TRUE,
+         main = "AUC for Bayesian logistic regression")
+plot.roc(testh$Heart, as.numeric(pred_dt_testh), percent = TRUE, print.auc = TRUE,
+         main = "AUC for Decision Tree model")
+plot.roc(testh$Heart, as.numeric(predict(model_rfh, testh)), percent = TRUE, print.auc = TRUE,
+         main = "AUC for Random Forest model")
+plot.roc(testh$Heart, as.numeric(predict(model_xgbh, testh)), percent = TRUE, print.auc = TRUE,
+         main = "AUC for XGBoost model")
+
+```
+Based on above analysis, two models turn out to be most accurate, and highly reliable: Bayesian logistic regression and Extreme gradient boosting. The aver-age accuracy is around 85%, and most relevant risk factors are CP (chest pain type), Chol (serum cholesterol level), Exang (exercise induced angina) and Op (ST depression induced by exercise relative to rest).\
+Decision tree models tend to overfit with training data's randomness, and hence underperforms with testing data.Random forest is often a good substitute, however, is also more difficult to interprate, especially when trying to look to models for more insight.\ 
+A final product of an interactive application was made with R Shiny. The app was based on XGBoost as the optimal algorithm. The dashboard will take input values of the above risk factors to calculate heart disease risk; it would also dis-play plots to visualize relationships between risk factors and possibility of heart disease. The app can also be deployed to the Shiny cloud to be publicly accessible.\
+\
+\
+_end_of_file_
+
+
+
+
